@@ -19,8 +19,8 @@
 
 #include <faiss/invlists/BlockInvertedLists.h>
 
-#include <faiss/impl/pq4_fast_scan.h>
-#include <faiss/impl/simd_result_handlers.h>
+#include <faiss/impl/pq_4bit/pq4_fast_scan.h>
+#include <faiss/impl/pq_4bit/simd_result_handlers.h>
 
 namespace faiss {
 
@@ -177,30 +177,6 @@ void IndexIVFPQFastScan::encode_vectors(
  * Look-Up Table functions
  *********************************************************/
 
-void fvec_madd_simd(
-        size_t n,
-        const float* a,
-        float bf,
-        const float* b,
-        float* c) {
-    assert(is_aligned_pointer(a));
-    assert(is_aligned_pointer(b));
-    assert(is_aligned_pointer(c));
-    assert(n % 8 == 0);
-    simd8float32 bf8(bf);
-    n /= 8;
-    for (size_t i = 0; i < n; i++) {
-        simd8float32 ai(a);
-        simd8float32 bi(b);
-
-        simd8float32 ci = fmadd(bf8, bi, ai);
-        ci.store(c);
-        c += 8;
-        a += 8;
-        b += 8;
-    }
-}
-
 bool IndexIVFPQFastScan::lookup_table_is_3d() const {
     return by_residual && metric_type == METRIC_L2;
 }
@@ -233,7 +209,8 @@ void IndexIVFPQFastScan::compute_LUT(
                     idx_t cij = cq.ids[ij];
 
                     if (cij >= 0) {
-                        fvec_madd_simd(
+                        // TODO avoid dynamic dispatch
+                        fvec_madd(
                                 dim12,
                                 precomputed_table.get() + cij * dim12,
                                 -2,
