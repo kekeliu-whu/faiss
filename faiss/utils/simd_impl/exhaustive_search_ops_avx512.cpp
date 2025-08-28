@@ -5,18 +5,15 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-// -*- c++ -*-
-
-#include <faiss/utils/distances_fused/avx512.h>
-
-#ifdef __AVX512F__
-
 #include <immintrin.h>
+#include <omp.h>
+
+#include <faiss/utils/exhaustive_search_ops.h>
+#include <faiss/utils/simd_impl/exhaustive_search_ops_avx512.h>
 
 namespace faiss {
 
 namespace {
-
 // It makes sense to like to overload certain cases because the further
 // kernels are in need of AVX512 registers. So, let's tell compiler
 // not to waste registers on a bit faster code, if needed.
@@ -280,10 +277,10 @@ void exhaustive_L2sqr_fused_cmax(
     res.end_multiple();
     InterruptCallback::check();
 }
-
 } // namespace
 
-bool exhaustive_L2sqr_fused_cmax_AVX512(
+template <>
+bool exhaustive_L2sqr_fused_cmax_simdlib<SIMDLevel::AVX512>(
         const float* x,
         const float* y,
         size_t d,
@@ -293,7 +290,8 @@ bool exhaustive_L2sqr_fused_cmax_AVX512(
         const float* y_norms) {
     // process only cases with certain dimensionalities
 
-#define DISPATCH(DIM, NX_POINTS_PER_LOOP, NY_POINTS_PER_LOOP)    \
+#define DISPATCH_L2SQR_FUSED_CMAX_AVX512(                        \
+        DIM, NX_POINTS_PER_LOOP, NY_POINTS_PER_LOOP)             \
     case DIM: {                                                  \
         exhaustive_L2sqr_fused_cmax<                             \
                 DIM,                                             \
@@ -303,44 +301,77 @@ bool exhaustive_L2sqr_fused_cmax_AVX512(
     }
 
     switch (d) {
-        DISPATCH(1, 8, 1)
-        DISPATCH(2, 8, 1)
-        DISPATCH(3, 8, 1)
-        DISPATCH(4, 8, 1)
-        DISPATCH(5, 8, 1)
-        DISPATCH(6, 8, 1)
-        DISPATCH(7, 8, 1)
-        DISPATCH(8, 8, 1)
-        DISPATCH(9, 8, 1)
-        DISPATCH(10, 8, 1)
-        DISPATCH(11, 8, 1)
-        DISPATCH(12, 8, 1)
-        DISPATCH(13, 8, 1)
-        DISPATCH(14, 8, 1)
-        DISPATCH(15, 8, 1)
-        DISPATCH(16, 8, 1)
-        DISPATCH(17, 8, 1)
-        DISPATCH(18, 8, 1)
-        DISPATCH(19, 8, 1)
-        DISPATCH(20, 8, 1)
-        DISPATCH(21, 8, 1)
-        DISPATCH(22, 8, 1)
-        DISPATCH(23, 8, 1)
-        DISPATCH(24, 8, 1)
-        DISPATCH(25, 8, 1)
-        DISPATCH(26, 8, 1)
-        DISPATCH(27, 8, 1)
-        DISPATCH(28, 8, 1)
-        DISPATCH(29, 8, 1)
-        DISPATCH(30, 8, 1)
-        DISPATCH(31, 8, 1)
-        DISPATCH(32, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(1, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(2, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(3, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(4, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(5, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(6, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(7, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(8, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(9, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(10, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(11, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(12, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(13, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(14, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(15, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(16, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(17, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(18, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(19, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(20, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(21, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(22, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(23, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(24, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(25, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(26, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(27, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(28, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(29, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(30, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(31, 8, 1)
+        DISPATCH_L2SQR_FUSED_CMAX_AVX512(32, 8, 1)
     }
 
-    return false;
 #undef DISPATCH
+
+    return false;
+}
+
+template <>
+void exhaustive_L2sqr_blas_simd_avx512_with_avx2_fallback<SIMDLevel::AVX512>(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        Top1BlockResultHandler<CMax<float, int64_t>>& res,
+        const float* y_norms) {
+    if (exhaustive_L2sqr_fused_cmax_simdlib<SIMDLevel::AVX512>(
+                x, y, d, nx, ny, res, y_norms)) {
+        return;
+    }
+
+    exhaustive_L2sqr_blas_simd<SIMDLevel::AVX2>(x, y, d, nx, ny, res, y_norms);
+}
+
+template <>
+void exhaustive_L2sqr_blas_simd<SIMDLevel::AVX512>(
+        const float* x,
+        const float* y,
+        size_t d,
+        size_t nx,
+        size_t ny,
+        Top1BlockResultHandler<CMax<float, int64_t>>& res,
+        const float* y_norms) {
+    if (nx == 0 || ny == 0) {
+        return;
+    }
+
+    exhaustive_L2sqr_blas_simd_avx512_with_avx2_fallback<SIMDLevel::AVX512>(
+            x, y, d, nx, ny, res, y_norms);
 }
 
 } // namespace faiss
-
-#endif

@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#ifdef COMPILE_SIMD_NEON
+#ifdef COMPILE_SIMD_ARM_NEON
 
 #include <faiss/impl/scalar_quantizer/codecs.h>
 #include <faiss/impl/scalar_quantizer/distance_computers.h>
@@ -374,4 +374,4 @@ struct DistanceComputerByte<Similarity, SIMDLevel::ARM_NEON>
 
 } // namespace faiss
 
-#endif // COMPILE_SIMD_NEON
+#endif // COMPILE_SIMD_ARM_NEON

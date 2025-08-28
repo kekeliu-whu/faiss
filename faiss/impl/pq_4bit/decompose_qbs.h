@@ -10,6 +10,12 @@
 // This is not standalone code, it is intended to be included in the kernels-X.h
 // files.
 
+#include <cstddef>
+#include <cstdint>
+
+#include <faiss/impl/pq_4bit/simd_result_handlers.h>
+#include <faiss/utils/simd_levels.h>
+
 // handle at most 4 blocks of queries
 template <int QBS, class ResultHandler, class Scaler>
 void accumulate_q_4step(
@@ -19,7 +25,7 @@ void accumulate_q_4step(
         const uint8_t* LUT0,
         ResultHandler& res,
         const Scaler& scaler) {
-    constexpr SIMDLevel SL = ResultHandler::SL;
+    constexpr faiss::SIMDLevel SL = ResultHandler::SL;
     constexpr int Q1 = QBS & 15;
     constexpr int Q2 = (QBS >> 4) & 15;
     constexpr int Q3 = (QBS >> 8) & 15;
@@ -27,7 +33,7 @@ void accumulate_q_4step(
     constexpr int SQ = Q1 + Q2 + Q3 + Q4;
 
     for (size_t j0 = 0; j0 < ntotal2; j0 += 32) {
-        FixedStorageHandler<SQ, 2, SL> res2;
+        faiss::simd_result_handlers::FixedStorageHandler<SQ, 2, SL> res2;
         const uint8_t* LUT = LUT0;
         kernel_accumulate_block<Q1>(nsq, codes, LUT, res2, scaler);
         LUT += Q1 * nsq * 16;
@@ -77,8 +83,8 @@ void accumulate(
         ResultHandler& res,
         const Scaler& scaler) {
     assert(nsq % 2 == 0);
-    assert(is_aligned_pointer(codes));
-    assert(is_aligned_pointer(LUT));
+    assert(faiss::is_aligned_pointer(codes));
+    assert(faiss::is_aligned_pointer(LUT));
 
 #define DISPATCH(NQ)                                     \
     case NQ:                                             \
@@ -107,8 +113,8 @@ void pq4_accumulate_loop_qbs_fixed_scaler(
         ResultHandler& res,
         const Scaler& scaler) {
     assert(nsq % 2 == 0);
-    assert(is_aligned_pointer(codes));
-    assert(is_aligned_pointer(LUT0));
+    assert(faiss::is_aligned_pointer(codes));
+    assert(faiss::is_aligned_pointer(LUT0));
 
     // try out optimized versions
     switch (qbs) {
