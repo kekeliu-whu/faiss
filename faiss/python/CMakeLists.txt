@@ -10,7 +10,11 @@ project(pyfaiss
   HOMEPAGE_URL "https://github.com/facebookresearch/faiss"
   LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin" OR FAISS_ENABLE_CUVS)
+  set(CMAKE_CXX_STANDARD 17)
+else()
+  set(CMAKE_CXX_STANDARD 20)
+endif()
 
 find_package(SWIG REQUIRED COMPONENTS python)
 include(${SWIG_USE_FILE})
@@ -99,19 +103,11 @@ else()
   find_package(faiss REQUIRED)
 endif()
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "AIX")
-swig_add_library(swigfaiss
-  TYPE MODULE
-  LANGUAGE python
-  SOURCES swigfaiss.swig
-)
-else ()
 swig_add_library(swigfaiss
   TYPE SHARED
   LANGUAGE python
   SOURCES swigfaiss.swig
 )
-endif()
 
 set_property(TARGET swigfaiss PROPERTY SWIG_COMPILE_OPTIONS -doxygen)
 
@@ -172,7 +168,10 @@ swig_add_library(faiss_example_external_module
 )
 set_property(TARGET faiss_example_external_module PROPERTY SWIG_COMPILE_OPTIONS -doxygen)
 
-if(NOT WIN32)
+if(AIX)
+  set_target_properties(swigfaiss PROPERTIES SUFFIX .a)
+  set_target_properties(faiss_example_external_module PROPERTIES SUFFIX .a)
+elseif(NOT WIN32)
   # NOTE: Python does not recognize the dylib extension.
   set_target_properties(swigfaiss PROPERTIES SUFFIX .so)
   set_target_properties(swigfaiss_avx2 PROPERTIES SUFFIX .so)
@@ -275,7 +274,7 @@ set_property(TARGET faiss_python_callbacks
   PROPERTY POSITION_INDEPENDENT_CODE ON
 )
 
-if (${CMAKE_SYSTEM_NAME} MATCHES "AIX")
+if ("${CMAKE_SYSTEM_NAME}" MATCHES "AIX")
 target_link_libraries(faiss_python_callbacks PRIVATE faiss)
 endif()
 
