@@ -266,6 +266,298 @@ simd16uint16 max_func(simd16uint16 v, simd16uint16 thr16) {
     }
 }
 
+#if defined(__AVX512F__) && defined(__AVX512VBMI2__)
+
+template <class C>
+void count_lt_and_eq(
+        const uint16_t* vals,
+        int n,
+        uint16_t thresh,
+        size_t& n_lt,
+        size_t& n_eq) {
+
+    n_lt = n_eq = 0;
+    size_t i = 0;
+
+    const __m512i v_thresh = _mm512_set1_epi16(thresh);
+
+    for (; i + 32 <= n; i += 32) {
+        const __m512i v_vals = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&vals[i]));
+        const __mmask32 mask_lt = _mm512_cmplt_epu16_mask(v_vals, v_thresh);
+        const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
+        n_lt += _mm_popcnt_u32(mask_lt);
+        n_eq += _mm_popcnt_u32(mask_eq);
+    }
+
+    // Scalar loop to process the remainder of the array
+    for (; i < n; i++) {
+        uint16_t v = vals[i];
+        if (C::cmp(thresh, v)) {
+            n_lt++;
+        } else if (v == thresh) {
+            n_eq++;
+        }
+    }
+}
+
+template <class C>
+int simd_compress_array(
+        uint16_t* vals,
+        int* ids,
+        size_t n,
+        uint16_t thresh,
+        int n_eq) {
+
+    size_t rp = 0; // read pointer
+    size_t wp = 0; // write pointer
+
+    const __m512i v_thresh = _mm512_set1_epi16(thresh);
+
+    for (; rp + 32 <= n; rp += 32) {
+        const __m512i v_vals = _mm512_loadu_si512(&vals[rp]);
+        const __m512i v_ids  = _mm512_loadu_si512(&ids[rp]);
+
+        __mmask32 mask_lt = _mm512_cmplt_epu16_mask(v_vals, v_thresh);
+        __mmask32 mask_eq_limited = 0;
+
+        if (n_eq > 0) {
+            const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
+            if (mask_eq != 0) {
+                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
+                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
+                mask_eq_limited = _pdep_u32((1ULL << num_to_keep) - 1, mask_eq);
+                n_eq -= num_to_keep;
+            }
+        }
+
+        const __mmask32 final_mask = mask_lt | mask_eq_limited;
+        _mm512_mask_compressstoreu_epi16(&vals[wp], final_mask, v_vals);
+        _mm512_mask_compressstoreu_epi32(&ids[wp], final_mask, v_ids);
+
+        wp += _mm_popcnt_u32(final_mask);
+    }
+
+    // scalar cleanup
+    for (; rp < n; rp++) {
+        if (C::cmp(thresh, vals[rp])) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+        } else if (n_eq > 0 && vals[rp] == thresh) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+            n_eq--;
+        }
+    }
+
+    assert(n_eq == 0);
+    return wp;
+}
+
+template <class C>
+int simd_compress_array(
+        uint16_t* vals,
+        int64_t* ids,
+        size_t n,
+        uint16_t thresh,
+        int n_eq) {
+
+    size_t rp = 0;
+    size_t wp = 0;
+
+    const __m512i v_thresh = _mm512_set1_epi16(thresh);
+
+    for (; rp + 32 <= n; rp += 32) {
+        const __m512i v_vals = _mm512_loadu_si512(&vals[rp]);
+        const __m512i v_ids  = _mm512_loadu_si512(&ids[rp]);
+
+        __mmask32 mask_lt = _mm512_cmplt_epu16_mask(v_vals, v_thresh);
+        __mmask32 mask_eq_limited = 0;
+
+        if (n_eq > 0) {
+            const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
+            if (mask_eq != 0) {
+                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
+                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
+                mask_eq_limited = _pdep_u32((1ULL << num_to_keep) - 1, mask_eq);
+                n_eq -= num_to_keep;
+            }
+        }
+
+        const __mmask32 final_mask = mask_lt | mask_eq_limited;
+        _mm512_mask_compressstoreu_epi16(&vals[wp], final_mask, v_vals);
+        _mm512_mask_compressstoreu_epi64(&ids[wp], final_mask, v_ids);
+
+        wp += _mm_popcnt_u32(final_mask);
+    }
+
+    // scalar cleanup
+    for (; rp < n; rp++) {
+        if (C::cmp(thresh, vals[rp])) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+        } else if (n_eq > 0 && vals[rp] == thresh) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+            n_eq--;
+        }
+    }
+
+    assert(n_eq == 0);
+    return wp;
+}
+
+template <class C>
+void count_lt_and_eq(
+        const float* vals,
+        int n,
+        float thresh,
+        size_t& n_lt,
+        size_t& n_eq) {
+    n_lt = n_eq = 0;
+    size_t i = 0;
+
+    const __m512 v_thresh = _mm512_set1_ps(thresh);
+
+    // Process 16 floats at a time
+    for (; i + 16 <= n; i += 16) {
+        const __m512 v_vals = _mm512_loadu_ps(&vals[i]);
+
+        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_LT_OQ);
+        __mmask16 mask_eq = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
+
+        n_lt += _mm_popcnt_u32(mask_lt);
+        n_eq += _mm_popcnt_u32(mask_eq);
+    }
+
+    // Scalar loop for leftovers
+    for (; i < n; i++) {
+        float v = vals[i];
+        if (C::cmp(thresh, v)) {
+            n_lt++;
+        } else if (v == thresh) {
+            n_eq++;
+        }
+    }
+}
+
+template <class C>
+int simd_compress_array_float(
+        float* vals,
+        int* ids,
+        size_t n,
+        float thresh,
+        int n_eq) {
+
+    size_t rp = 0;
+    size_t wp = 0;
+
+    const __m512 v_thresh = _mm512_set1_ps(thresh);
+
+    for (; rp + 16 <= n; rp += 16) { // 16 floats per 512-bit reg
+        const __m512 v_vals = _mm512_loadu_ps(&vals[rp]);
+        const __m512i v_ids = _mm512_loadu_si512(&ids[rp]);
+
+        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_LT_OQ);
+        __mmask16 mask_eq_limited = 0;
+
+        if (n_eq > 0) {
+            __mmask16 mask_eq = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
+            if (mask_eq != 0) {
+                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
+                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
+                mask_eq_limited = _pdep_u32((1U << num_to_keep) - 1, mask_eq);
+                n_eq -= num_to_keep;
+            }
+        }
+
+        const __mmask16 final_mask = mask_lt | mask_eq_limited;
+
+        _mm512_mask_compressstoreu_ps(&vals[wp], final_mask, v_vals);
+        _mm512_mask_compressstoreu_epi32(&ids[wp], final_mask, v_ids);
+
+        wp += _mm_popcnt_u32(final_mask);
+    }
+
+    // Scalar cleanup
+    for (; rp < n; rp++) {
+        if (C::cmp(thresh, vals[rp])) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+        } else if (n_eq > 0 && vals[rp] == thresh) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+            n_eq--;
+        }
+    }
+
+    assert(n_eq == 0);
+    return wp;
+}
+
+template <class C>
+int simd_compress_array(
+        float* vals,
+        int64_t* ids,
+        size_t n,
+        float thresh,
+        int n_eq) {
+
+    size_t rp = 0;
+    size_t wp = 0;
+
+    const __m512 v_thresh = _mm512_set1_ps(thresh);
+
+    for (; rp + 16 <= n; rp += 16) {
+        const __m512 v_vals = _mm512_loadu_ps(&vals[rp]);
+        const __m512i v_ids = _mm512_loadu_si512(&ids[rp]);
+
+        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_LT_OQ);
+        __mmask16 mask_eq_limited = 0;
+
+        if (n_eq > 0) {
+            __mmask16 mask_eq = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
+            if (mask_eq != 0) {
+                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
+                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
+                mask_eq_limited = _pdep_u32((1U << num_to_keep) - 1, mask_eq);
+                n_eq -= num_to_keep;
+            }
+        }
+
+        const __mmask16 final_mask = mask_lt | mask_eq_limited;
+
+        _mm512_mask_compressstoreu_ps(&vals[wp], final_mask, v_vals);
+        _mm512_mask_compressstoreu_epi64(&ids[wp], final_mask, v_ids);
+
+        wp += _mm_popcnt_u32(final_mask);
+    }
+
+    // Scalar cleanup
+    for (; rp < n; rp++) {
+        if (C::cmp(thresh, vals[rp])) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+        } else if (n_eq > 0 && vals[rp] == thresh) {
+            vals[wp] = vals[rp];
+            ids[wp]  = ids[rp];
+            wp++;
+            n_eq--;
+        }
+    }
+
+    assert(n_eq == 0);
+    return wp;
+}
+
+#else
+
 template <class C>
 void count_lt_and_eq(
         const uint16_t* vals,
@@ -384,6 +676,8 @@ int simd_compress_array(
     assert(n_eq == 0);
     return wp;
 }
+
+#endif
 
 // #define MICRO_BENCHMARK
 
