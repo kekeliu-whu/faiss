@@ -275,30 +275,41 @@ void count_lt_and_eq(
         uint16_t thresh,
         size_t& n_lt,
         size_t& n_eq) {
-    n_lt = n_eq = 0;
-    size_t i = 0;
+    n_lt = 0;
+    n_eq = 0;
+
+    size_t local_n_lt = 0;
+    size_t local_n_eq = 0;
+
+    int i = 0;
+    constexpr int VEC_SIZE = 32;
 
     constexpr int cmp_op = C::is_max ? _MM_CMPINT_LT : _MM_CMPINT_GT;
-    const __m512i v_thresh = _mm512_set1_epi16(thresh);
 
-    for (; i + 32 <= n; i += 32) {
-        const __m512i v_vals =
-                _mm512_loadu_si512(reinterpret_cast<const __m512i*>(&vals[i]));
-        const __mmask32 mask_lt =
-                _mm512_cmp_epu16_mask(v_vals, v_thresh, cmp_op);
-        const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
-        n_lt += _mm_popcnt_u32(mask_lt);
-        n_eq += _mm_popcnt_u32(mask_eq);
+    __m512i v_thresh = _mm512_set1_epi16(thresh);
+
+    for (; i + VEC_SIZE <= n; i += VEC_SIZE) {
+        __m512i v_vals = _mm512_loadu_si512(vals + i);
+
+        __mmask32 k_lt = _mm512_cmp_epu16_mask(v_vals, v_thresh, cmp_op);
+        __mmask32 k_eq = _mm512_cmp_epu16_mask(v_vals, v_thresh, _MM_CMPINT_EQ);
+        __mmask32 k_eq_only = k_eq & ~k_lt;
+
+        local_n_lt += _mm_popcnt_u32(k_lt);
+        local_n_eq += _mm_popcnt_u32(k_eq_only);
     }
-    // Scalar cleanup
+
     for (; i < n; i++) {
         uint16_t v = vals[i];
         if (C::cmp(thresh, v)) {
-            n_lt++;
+            local_n_lt++;
         } else if (v == thresh) {
-            n_eq++;
+            local_n_eq++;
         }
     }
+
+    n_lt = local_n_lt;
+    n_eq = local_n_eq;
 }
 
 template <class C>
@@ -308,275 +319,121 @@ int simd_compress_array(
         size_t n,
         uint16_t thresh,
         int n_eq) {
-    size_t rp = 0; // read pointer
-    size_t wp = 0; // write pointer
-
     constexpr int cmp_op = C::is_max ? _MM_CMPINT_LT : _MM_CMPINT_GT;
-    const __m512i v_thresh = _mm512_set1_epi16(thresh);
 
-    for (; rp + 32 <= n; rp += 32) {
-        const __m512i v_vals = _mm512_loadu_si512(&vals[rp]);
-        // Load ids in two chunks
-        const __m512i v_ids_lo = _mm512_loadu_si512(&ids[rp]); // ids[0..15]
-        const __m512i v_ids_hi =
-                _mm512_loadu_si512(&ids[rp + 16]); // ids[16..31]
-
-        __mmask32 mask_lt = _mm512_cmp_epu16_mask(v_vals, v_thresh, cmp_op);
-        __mmask32 mask_eq_limited = 0;
-        if (n_eq > 0) {
-            const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
-            if (mask_eq != 0) {
-                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
-                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
-                mask_eq_limited = _pdep_u32((1ULL << num_to_keep) - 1, mask_eq);
-                n_eq -= num_to_keep;
-            }
-        }
-        const __mmask32 final_mask = mask_lt | mask_eq_limited;
-
-        _mm512_mask_compressstoreu_epi16(&vals[wp], final_mask, v_vals);
-
-        __mmask16 mask_lo = (__mmask16)(final_mask & 0xFFFF);
-        __mmask16 mask_hi = (__mmask16)(final_mask >> 16);
-
-        size_t count_lo = _mm_popcnt_u32(mask_lo);
-        _mm512_mask_compressstoreu_epi32(&ids[wp], mask_lo, v_ids_lo);
-        _mm512_mask_compressstoreu_epi32(
-                &ids[wp + count_lo], mask_hi, v_ids_hi);
-
-        wp += _mm_popcnt_u32(final_mask);
-    }
-    // Scalar cleanup
-    for (; rp < n; rp++) {
-        if (C::cmp(thresh, vals[rp])) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
-            wp++;
-        } else if (n_eq > 0 && vals[rp] == thresh) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
-            wp++;
-            n_eq--;
-        }
-    }
-    assert(n_eq == 0);
-    return wp;
-}
-
-template <class C>
-int simd_compress_array(
-        uint16_t* vals,
-        int64_t* ids,
-        size_t n,
-        uint16_t thresh,
-        int n_eq) {
-    size_t rp = 0;
-    size_t wp = 0;
-
-    constexpr int cmp_op = C::is_max ? _MM_CMPINT_LT : _MM_CMPINT_GT;
-    const __m512i v_thresh = _mm512_set1_epi16(thresh);
-
-    for (; rp + 32 <= n; rp += 32) {
-        const __m512i v_vals = _mm512_loadu_si512(&vals[rp]);
-        // Load ids in four chunks
-        const __m512i v_ids_0 = _mm512_loadu_si512(&ids[rp + 0]); // ids[0..7]
-        const __m512i v_ids_1 = _mm512_loadu_si512(&ids[rp + 8]); // ids[8..15]
-        const __m512i v_ids_2 =
-                _mm512_loadu_si512(&ids[rp + 16]); // ids[16..23]
-        const __m512i v_ids_3 =
-                _mm512_loadu_si512(&ids[rp + 24]); // ids[24..31]
-
-        __mmask32 mask_lt = _mm512_cmp_epu16_mask(v_vals, v_thresh, cmp_op);
-        __mmask32 mask_eq_limited = 0;
-        if (n_eq > 0) {
-            const __mmask32 mask_eq = _mm512_cmpeq_epi16_mask(v_vals, v_thresh);
-            if (mask_eq != 0) {
-                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
-                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
-                mask_eq_limited = _pdep_u32((1ULL << num_to_keep) - 1, mask_eq);
-                n_eq -= num_to_keep;
-            }
-        }
-        const __mmask32 final_mask = mask_lt | mask_eq_limited;
-
-        _mm512_mask_compressstoreu_epi16(&vals[wp], final_mask, v_vals);
-
-        __mmask8 mask_0 = (__mmask8)((final_mask >> 0) & 0xFF);
-        __mmask8 mask_1 = (__mmask8)((final_mask >> 8) & 0xFF);
-        __mmask8 mask_2 = (__mmask8)((final_mask >> 16) & 0xFF);
-        __mmask8 mask_3 = (__mmask8)((final_mask >> 24) & 0xFF);
-
-        size_t count_0 = _mm_popcnt_u32(mask_0);
-        size_t count_1 = _mm_popcnt_u32(mask_1);
-        size_t count_2 = _mm_popcnt_u32(mask_2);
-
-        _mm512_mask_compressstoreu_epi64(&ids[wp], mask_0, v_ids_0);
-        _mm512_mask_compressstoreu_epi64(&ids[wp + count_0], mask_1, v_ids_1);
-        _mm512_mask_compressstoreu_epi64(
-                &ids[wp + count_0 + count_1], mask_2, v_ids_2);
-        _mm512_mask_compressstoreu_epi64(
-                &ids[wp + count_0 + count_1 + count_2], mask_3, v_ids_3);
-
-        wp += _mm_popcnt_u32(final_mask);
-    }
-    // Scalar cleanup
-    for (; rp < n; rp++) {
-        if (C::cmp(thresh, vals[rp])) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
-            wp++;
-        } else if (n_eq > 0 && vals[rp] == thresh) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
-            wp++;
-            n_eq--;
-        }
-    }
-    assert(n_eq == 0);
-    return wp;
-}
-
-template <class C>
-void count_lt_and_eq(
-        const float* vals,
-        int n,
-        float thresh,
-        size_t& n_lt,
-        size_t& n_eq) {
-    n_lt = n_eq = 0;
+    int wp = 0;
     size_t i = 0;
 
-    constexpr int cmp_op = C::is_max ? _CMP_LT_OQ : _CMP_GT_OQ;
-    const __m512 v_thresh = _mm512_set1_ps(thresh);
+    constexpr int VEC_SIZE = 16;
+    __m512i v_thresh = _mm512_set1_epi32(static_cast<int32_t>(thresh));
 
-    for (; i + 16 <= n; i += 16) {
-        const __m512 v_vals = _mm512_loadu_ps(&vals[i]);
+    for (; i + VEC_SIZE <= n; i += VEC_SIZE) {
+        __m256i v_vals_u16 = _mm256_loadu_si256((__m256i*)(vals + i));
+        __m512i v_ids_s32 = _mm512_loadu_si512(ids + i);
+        __m512i v_vals_s32 = _mm512_cvtepu16_epi32(v_vals_u16);
 
-        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, cmp_op);
-        __mmask16 mask_eq = _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
+        __mmask16 k_primary =
+                _mm512_cmp_epi32_mask(v_vals_s32, v_thresh, cmp_op);
+        __mmask16 k_equal_to_add = 0;
 
-        n_lt += _mm_popcnt_u32(mask_lt);
-        n_eq += _mm_popcnt_u32(mask_eq);
-    }
-    // Scalar cleanup
-    for (; i < n; i++) {
-        float v = vals[i];
-        if (C::cmp(thresh, v)) {
-            n_lt++;
-        } else if (v == thresh) {
-            n_eq++;
-        }
-    }
-}
+        int num_to_take = 0;
 
-template <class C>
-int simd_compress_array(
-        float* vals,
-        int* ids,
-        size_t n,
-        float thresh,
-        int n_eq) {
-    size_t rp = 0;
-    size_t wp = 0;
-
-    constexpr int cmp_op = C::is_max ? _CMP_LT_OQ : _CMP_GT_OQ;
-    const __m512 v_thresh = _mm512_set1_ps(thresh);
-
-    for (; rp + 16 <= n; rp += 16) {
-        const __m512 v_vals = _mm512_loadu_ps(&vals[rp]);
-        const __m512i v_ids = _mm512_loadu_si512(&ids[rp]);
-        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, cmp_op);
-        __mmask16 mask_eq_limited = 0;
         if (n_eq > 0) {
-            __mmask16 mask_eq =
-                    _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
-            if (mask_eq != 0) {
-                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
-                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
-                mask_eq_limited = _pdep_u32((1U << num_to_keep) - 1, mask_eq);
-                n_eq -= num_to_keep;
-            }
+            __mmask16 k_equal =
+                    _mm512_cmp_epi32_mask(v_vals_s32, v_thresh, _MM_CMPINT_EQ);
+            __mmask16 k_equal_only = k_equal & ~k_primary;
+
+            int num_eq_found = _mm_popcnt_u32(k_equal_only);
+            num_to_take = std::min(n_eq, num_eq_found);
+
+            k_equal_to_add =
+                    _pdep_u32((uint32_t(1) << num_to_take) - 1, k_equal_only);
         }
-        const __mmask16 final_mask = mask_lt | mask_eq_limited;
-        _mm512_mask_compressstoreu_ps(&vals[wp], final_mask, v_vals);
-        _mm512_mask_compressstoreu_epi32(&ids[wp], final_mask, v_ids);
-        wp += _mm_popcnt_u32(final_mask);
+
+        __mmask16 k_final = k_primary | k_equal_to_add;
+        _mm256_mask_compressstoreu_epi16(vals + wp, k_final, v_vals_u16);
+        _mm512_mask_compressstoreu_epi32(ids + wp, k_final, v_ids_s32);
+
+        wp += _mm_popcnt_u32(k_final);
+        n_eq -= num_to_take;
     }
-    // Scalar cleanup
-    for (; rp < n; rp++) {
-        if (C::cmp(thresh, vals[rp])) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
+
+    for (; i < n; i++) {
+        if (C::cmp(thresh, vals[i])) {
+            vals[wp] = vals[i];
+            ids[wp] = ids[i];
             wp++;
-        } else if (n_eq > 0 && vals[rp] == thresh) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
+        } else if (n_eq > 0 && vals[i] == thresh) {
+            vals[wp] = vals[i];
+            ids[wp] = ids[i];
             wp++;
             n_eq--;
         }
     }
+
     assert(n_eq == 0);
     return wp;
 }
 
 template <class C>
 int simd_compress_array(
-        float* vals,
+        uint16_t* vals,
         int64_t* ids,
         size_t n,
-        float thresh,
+        uint16_t thresh,
         int n_eq) {
-    size_t rp = 0;
-    size_t wp = 0;
+    constexpr int cmp_op = C::is_max ? _MM_CMPINT_LT : _MM_CMPINT_GT;
 
-    constexpr int cmp_op = C::is_max ? _CMP_LT_OQ : _CMP_GT_OQ;
-    const __m512 v_thresh = _mm512_set1_ps(thresh);
+    int wp = 0;
+    size_t i = 0;
 
-    for (; rp + 16 <= n; rp += 16) {
-        const __m512 v_vals = _mm512_loadu_ps(&vals[rp]);
-        // Load ids in two chunks
-        const __m512i v_ids_lo = _mm512_loadu_si512(&ids[rp]);     // ids[0..7]
-        const __m512i v_ids_hi = _mm512_loadu_si512(&ids[rp + 8]); // ids[8..15]
+    constexpr int VEC_SIZE = 8;
+    __m512i v_thresh = _mm512_set1_epi64(static_cast<int64_t>(thresh));
 
-        __mmask16 mask_lt = _mm512_cmp_ps_mask(v_vals, v_thresh, cmp_op);
-        __mmask16 mask_eq_limited = 0;
+    for (; i + VEC_SIZE <= n; i += VEC_SIZE) {
+        __m128i v_vals_u16 = _mm_loadu_si128((__m128i*)(vals + i));
+        __m512i v_ids_s64 = _mm512_loadu_si512(ids + i);
+        __m512i v_vals_s64 = _mm512_cvtepu16_epi64(v_vals_u16);
+
+        __mmask8 k_primary =
+                _mm512_cmp_epi64_mask(v_vals_s64, v_thresh, cmp_op);
+        __mmask8 k_equal_to_add = 0;
+
+        int num_to_take = 0;
+
         if (n_eq > 0) {
-            __mmask16 mask_eq =
-                    _mm512_cmp_ps_mask(v_vals, v_thresh, _CMP_EQ_OQ);
-            if (mask_eq != 0) {
-                uint32_t popcnt_eq = _mm_popcnt_u32(mask_eq);
-                uint32_t num_to_keep = std::min((uint32_t)n_eq, popcnt_eq);
-                mask_eq_limited = _pdep_u32((1U << num_to_keep) - 1, mask_eq);
-                n_eq -= num_to_keep;
-            }
+            __mmask8 k_equal =
+                    _mm512_cmp_epi64_mask(v_vals_s64, v_thresh, _MM_CMPINT_EQ);
+            __mmask8 k_equal_only = k_equal & ~k_primary;
+
+            int num_eq_found = _mm_popcnt_u32(k_equal_only);
+            num_to_take = std::min(n_eq, num_eq_found);
+
+            k_equal_to_add =
+                    _pdep_u32((uint32_t(1) << num_to_take) - 1, k_equal_only);
         }
-        const __mmask16 final_mask = mask_lt | mask_eq_limited;
 
-        _mm512_mask_compressstoreu_ps(&vals[wp], final_mask, v_vals);
+        __mmask8 k_final = k_primary | k_equal_to_add;
+        _mm_mask_compressstoreu_epi16(vals + wp, k_final, v_vals_u16);
+        _mm512_mask_compressstoreu_epi64(ids + wp, k_final, v_ids_s64);
 
-        __mmask8 mask_lo = (__mmask8)(final_mask & 0xFF);
-        __mmask8 mask_hi = (__mmask8)(final_mask >> 8);
-
-        size_t count_lo = _mm_popcnt_u32(mask_lo);
-        _mm512_mask_compressstoreu_epi64(&ids[wp], mask_lo, v_ids_lo);
-        _mm512_mask_compressstoreu_epi64(
-                &ids[wp + count_lo], mask_hi, v_ids_hi);
-
-        wp += _mm_popcnt_u32(final_mask);
+        wp += _mm_popcnt_u32(k_final);
+        n_eq -= num_to_take;
     }
-    // Scalar cleanup
-    for (; rp < n; rp++) {
-        if (C::cmp(thresh, vals[rp])) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
+
+    for (; i < n; i++) {
+        if (C::cmp(thresh, vals[i])) {
+            vals[wp] = vals[i];
+            ids[wp] = ids[i];
             wp++;
-        } else if (n_eq > 0 && vals[rp] == thresh) {
-            vals[wp] = vals[rp];
-            ids[wp] = ids[rp];
+        } else if (n_eq > 0 && vals[i] == thresh) {
+            vals[wp] = vals[i];
+            ids[wp] = ids[i];
             wp++;
             n_eq--;
         }
     }
+
     assert(n_eq == 0);
     return wp;
 }
