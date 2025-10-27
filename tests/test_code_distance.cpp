@@ -70,7 +70,7 @@ void test(
         std::uniform_int_distribution<uint8_t> u1(0, 255);
 
 #pragma omp for schedule(guided)
-        for (size_t i = 0; i < codes.size(); i++) {
+        for (int i = 0; i < codes.size(); i++) {
             codes[i] = u1(rng0);
         }
     }
@@ -79,7 +79,7 @@ void test(
     std::vector<float> resultsRef(n, 0);
     for (size_t k = 0; k < 10; k++) {
 #pragma omp parallel for schedule(guided)
-        for (size_t i = 0; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             resultsRef[i] =
                     faiss::distance_single_code_generic<faiss::PQDecoder8>(
                             subq, 8, lookup.data(), codes.data() + subq * i);
@@ -93,7 +93,7 @@ void test(
         const auto startingTimepoint = std::chrono::steady_clock::now();
         for (size_t k = 0; k < 1000; k++) {
 #pragma omp parallel for schedule(guided)
-            for (size_t i = 0; i < n; i++) {
+            for (int i = 0; i < n; i++) {
                 resultsNewGeneric1x[i] =
                         faiss::distance_single_code_generic<faiss::PQDecoder8>(
                                 subq,
@@ -116,7 +116,7 @@ void test(
         const auto startingTimepoint = std::chrono::steady_clock::now();
         for (size_t k = 0; k < 1000; k++) {
 #pragma omp parallel for schedule(guided)
-            for (size_t i = 0; i < n; i += 4) {
+            for (int i = 0; i < n; i += 4) {
                 faiss::distance_four_codes_generic<faiss::PQDecoder8>(
                         subq,
                         8,
@@ -146,7 +146,7 @@ void test(
         const auto startingTimepoint = std::chrono::steady_clock::now();
         for (size_t k = 0; k < 1000; k++) {
 #pragma omp parallel for schedule(guided)
-            for (size_t i = 0; i < n; i++) {
+            for (int i = 0; i < n; i++) {
                 resultsNewCustom1x[i] =
                         faiss::distance_single_code<faiss::PQDecoder8>(
                                 subq,
@@ -169,7 +169,7 @@ void test(
         const auto startingTimepoint = std::chrono::steady_clock::now();
         for (size_t k = 0; k < 1000; k++) {
 #pragma omp parallel for schedule(guided)
-            for (size_t i = 0; i < n; i += 4) {
+            for (int i = 0; i < n; i += 4) {
                 faiss::distance_four_codes<faiss::PQDecoder8>(
                         subq,
                         8,

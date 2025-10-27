@@ -209,7 +209,7 @@ if(FAISS_ENABLE_GPU)
   endif()
 endif()
 
-find_package(OpenMP REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 
 target_link_libraries(swigfaiss PRIVATE
   faiss
