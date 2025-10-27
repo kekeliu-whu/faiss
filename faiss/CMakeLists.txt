@@ -392,7 +392,7 @@ if(FAISS_USE_LTO)
   endif()
 endif()
 
-find_package(OpenMP REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 target_link_libraries(faiss PRIVATE OpenMP::OpenMP_CXX)
 target_link_libraries(faiss_avx2 PRIVATE OpenMP::OpenMP_CXX)
 target_link_libraries(faiss_avx512 PRIVATE OpenMP::OpenMP_CXX)

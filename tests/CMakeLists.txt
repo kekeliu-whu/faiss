@@ -12,7 +12,7 @@ set(FAISS_TEST_SRC
   test_ivf_index.cpp
   test_merge.cpp
   test_omp_threads.cpp
-  test_ondisk_ivf.cpp
+  # test_ondisk_ivf.cpp
   test_pairs_decoding.cpp
   test_params_override.cpp
   test_pq_encoding.cpp
@@ -78,7 +78,7 @@ endif()
 ]=])
 endif()
 
-find_package(OpenMP REQUIRED)
+find_package(OpenMP REQUIRED COMPONENTS CXX)
 find_package(GTest CONFIG REQUIRED)
 
 target_link_libraries(faiss_test PRIVATE

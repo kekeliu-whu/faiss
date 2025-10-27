@@ -509,7 +509,7 @@ void runPQCodeDistancesMM(
     // Transpose (sub q)(q * c)(code) to (q * c)(sub q)(code) (which
     // is where we build our output distances). L2 version of this has an added
     // -2 multiplicative factor
-    auto outCodeDistancesView = outCodeDistancesF.view<3>(
+    Tensor<float, 3, true> outCodeDistancesView = outCodeDistancesF.view<3>(
             {coarseIndices.getSize(0) * coarseIndices.getSize(1),
              outCodeDistances.getSize(2),
              outCodeDistances.getSize(3)});
